@@ -18,7 +18,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/proto"
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/component/componenttest"
@@ -1224,7 +1223,7 @@ func TestPersistentQueue_SizerLegacyFormatMigration(t *testing.T) {
 
 	// Add items to storage corresponding to the legacy writeIndex and itemSizer
 	for i := uint64(0); i < writeIndex; i++ {
-		itemData, marshalErr := encoding.Marshal(req)
+		itemData, marshalErr := encoding.Marshal(context.Background(), req)
 		require.NoError(t, marshalErr)
 		require.NoError(t, client.Set(context.Background(), getItemKey(i), itemData))
 	}
@@ -1248,7 +1247,7 @@ func TestPersistentQueue_SizerLegacyFormatMigration(t *testing.T) {
 	require.NotNil(t, metadataBytes)
 
 	metadata := &pq.metadata
-	err = proto.Unmarshal(metadataBytes, metadata)
+	err = metadata.Unmarshal(metadataBytes)
 	require.NoError(t, err)
 
 	assert.Equal(t, readIndex, metadata.ReadIndex)

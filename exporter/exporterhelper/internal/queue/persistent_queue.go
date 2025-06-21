@@ -13,7 +13,6 @@ import (
 	"sync/atomic"
 
 	"go.uber.org/zap"
-	"google.golang.org/protobuf/proto"
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/exporter/exporterhelper/internal/experr"
@@ -238,7 +237,7 @@ func (pq *persistentQueue[T]) loadQueueMetadata(ctx context.Context) error {
 	}
 
 	metadata := &pq.metadata
-	if err = proto.Unmarshal(buf, metadata); err != nil {
+	if err = metadata.Unmarshal(buf); err != nil {
 		return err
 	}
 
@@ -419,9 +418,10 @@ func (pq *persistentQueue[T]) getNextItem(ctx context.Context) (uint64, T, conte
 
 	metadataBytes, err := metadataToBytes(&pq.metadata)
 	var request T
+	restoredCtx := context.Background()
 
 	if err != nil {
-		return 0, request, false
+		return 0, request, restoredCtx, false
 	}
 
 	getOp := storage.GetOperation(getItemKey(index))
@@ -429,8 +429,6 @@ func (pq *persistentQueue[T]) getNextItem(ctx context.Context) (uint64, T, conte
 		storage.SetOperation(queueMetadataKey, metadataBytes),
 		getOp)
 
-	var request T
-	restoredCtx := context.Background()
 	if err == nil {
 		restoredCtx, request, err = pq.set.encoding.Unmarshal(getOp.Value)
 	}
@@ -674,7 +672,7 @@ func bytesToItemIndexArray(buf []byte) ([]uint64, error) {
 }
 
 func metadataToBytes(meta *QueueMetadata) ([]byte, error) {
-	return proto.Marshal(meta)
+	return meta.Marshal()
 }
 
 type indexDone struct {
