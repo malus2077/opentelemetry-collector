@@ -41,11 +41,6 @@ func (is *itemsSizer) Sizeof(val uint64) int64 {
 	return int64(val)
 }
 
-var availableSizers = map[request.SizerType]request.Sizer[uint64]{
-	request.SizerTypeRequests: request.RequestsSizer[uint64]{},
-	request.SizerTypeItems:    &itemsSizer{},
-}
-
 type uint64Encoding struct{}
 
 func (uint64Encoding) Marshal(_ context.Context, val uint64) ([]byte, error) {
@@ -218,11 +213,10 @@ func (m *fakeStorageClientWithErrors) Reset() {
 }
 
 // createAndStartTestPersistentQueue creates and starts a fake queue with the given capacity and number of consumers.
-func createAndStartTestPersistentQueue(t *testing.T, sizerType request.SizerType, sizer request.Sizer[uint64], capacity int64, numConsumers int,
+func createAndStartTestPersistentQueue(t *testing.T, sizer request.Sizer[uint64], capacity int64, numConsumers int,
 	consumeFunc func(_ context.Context, item uint64) error,
 ) Queue[uint64] {
 	pq := newPersistentQueue[uint64](persistentQueueSettings[uint64]{
-		sizerType: sizerType,
 		sizer:     sizer,
 		capacity:  capacity,
 		signal:    pipeline.SignalTraces,
@@ -246,41 +240,37 @@ func createAndStartTestPersistentQueue(t *testing.T, sizerType request.SizerType
 
 func createTestPersistentQueueWithClient(client storage.Client) *persistentQueue[uint64] {
 	pq := newPersistentQueue[uint64](persistentQueueSettings[uint64]{
-		sizerType:       request.SizerTypeRequests,
-		sizer:           request.RequestsSizer[uint64]{},
-		availableSizers: availableSizers,
-		capacity:        1000,
-		signal:          pipeline.SignalTraces,
-		storageID:       component.ID{},
-		encoding:        uint64Encoding{},
-		id:              component.NewID(exportertest.NopType),
-		telemetry:       componenttest.NewNopTelemetrySettings(),
+		sizer:     request.RequestsSizer[uint64]{},
+		capacity:  1000,
+		signal:    pipeline.SignalTraces,
+		storageID: component.ID{},
+		encoding:  uint64Encoding{},
+		id:        component.NewID(exportertest.NopType),
+		telemetry: componenttest.NewNopTelemetrySettings(),
 	}).(*persistentQueue[uint64])
 	pq.initClient(context.Background(), client)
 	return pq
 }
 
 func createTestPersistentQueueWithRequestsCapacity(tb testing.TB, ext storage.Extension, capacity int64) *persistentQueue[uint64] {
-	return createTestPersistentQueueWithCapacityLimiter(tb, ext, request.SizerTypeRequests, request.RequestsSizer[uint64]{}, capacity)
+	return createTestPersistentQueueWithCapacityLimiter(tb, ext, request.RequestsSizer[uint64]{}, capacity)
 }
 
 func createTestPersistentQueueWithItemsCapacity(tb testing.TB, ext storage.Extension, capacity int64) *persistentQueue[uint64] {
-	return createTestPersistentQueueWithCapacityLimiter(tb, ext, request.SizerTypeItems, &itemsSizer{}, capacity)
+	return createTestPersistentQueueWithCapacityLimiter(tb, ext, &itemsSizer{}, capacity)
 }
 
-func createTestPersistentQueueWithCapacityLimiter(tb testing.TB, ext storage.Extension, sizerType request.SizerType, sizer request.Sizer[uint64],
+func createTestPersistentQueueWithCapacityLimiter(tb testing.TB, ext storage.Extension, sizer request.Sizer[uint64],
 	capacity int64,
 ) *persistentQueue[uint64] {
 	pq := newPersistentQueue[uint64](persistentQueueSettings[uint64]{
-		sizerType:       sizerType,
-		sizer:           sizer,
-		availableSizers: availableSizers,
-		capacity:        capacity,
-		signal:          pipeline.SignalTraces,
-		storageID:       component.ID{},
-		encoding:        uint64Encoding{},
-		id:              component.NewID(exportertest.NopType),
-		telemetry:       componenttest.NewNopTelemetrySettings(),
+		sizer:     sizer,
+		capacity:  capacity,
+		signal:    pipeline.SignalTraces,
+		storageID: component.ID{},
+		encoding:  uint64Encoding{},
+		id:        component.NewID(exportertest.NopType),
+		telemetry: componenttest.NewNopTelemetrySettings(),
 	}).(*persistentQueue[uint64])
 	require.NoError(tb, pq.Start(context.Background(), hosttest.NewHost(map[component.ID]component.Component{{}: ext})))
 	return pq
@@ -313,7 +303,7 @@ func TestPersistentQueue_FullCapacity(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			done := make(chan struct{})
 			pq := createAndStartTestPersistentQueue(t,
-				tt.sizeType, tt.sizer, tt.capacity, 1,
+				tt.sizer, tt.capacity, 1,
 				func(context.Context, uint64) error {
 					<-done
 					return nil
@@ -343,7 +333,7 @@ func TestPersistentQueue_FullCapacity(t *testing.T) {
 }
 
 func TestPersistentQueue_Shutdown(t *testing.T) {
-	pq := createAndStartTestPersistentQueue(t, request.SizerTypeRequests,
+	pq := createAndStartTestPersistentQueue(t,
 		request.RequestsSizer[uint64]{}, 1001, 1,
 		func(context.Context, uint64) error {
 			return nil
@@ -387,7 +377,7 @@ func TestPersistentQueue_ConsumersProducers(t *testing.T) {
 			req := uint64(10)
 
 			consumed := &atomic.Int64{}
-			pq := createAndStartTestPersistentQueue(t, request.SizerTypeRequests,
+			pq := createAndStartTestPersistentQueue(t,
 				request.RequestsSizer[uint64]{}, 1000, c.numConsumers,
 				func(context.Context, uint64) error {
 					consumed.Add(int64(1))
@@ -408,28 +398,23 @@ func TestPersistentQueue_ConsumersProducers(t *testing.T) {
 
 func TestPersistentBlockingQueue(t *testing.T) {
 	tests := []struct {
-		name      string
-		sizerType request.SizerType
-		sizer     request.Sizer[uint64]
+		name  string
+		sizer request.Sizer[uint64]
 	}{
 		{
-			name:      "requests_based",
-			sizerType: request.SizerTypeRequests,
-			sizer:     request.RequestsSizer[uint64]{},
+			name:  "requests_based",
+			sizer: request.RequestsSizer[uint64]{},
 		},
 		{
-			name:      "items_based",
-			sizerType: request.SizerTypeItems,
-			sizer:     &itemsSizer{},
+			name:  "items_based",
+			sizer: &itemsSizer{},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			pq := newPersistentQueue[uint64](persistentQueueSettings[uint64]{
-				sizerType:       tt.sizerType,
 				sizer:           tt.sizer,
-				availableSizers: availableSizers,
 				capacity:        100,
 				blockOnOverflow: true,
 				signal:          pipeline.SignalTraces,
@@ -911,7 +896,7 @@ func TestPersistentQueue_ShutdownWhileConsuming(t *testing.T) {
 func TestPersistentQueue_StorageFull(t *testing.T) {
 	marshaled, err := uint64Encoding{}.Marshal(context.Background(), uint64(50))
 	require.NoError(t, err)
-	maxSizeInBytes := len(marshaled) * 10 // arbitrary small number
+	maxSizeInBytes := len(marshaled) * 15 // arbitrary small number
 
 	client := newFakeBoundedStorageClient(maxSizeInBytes)
 	ps := createTestPersistentQueueWithClient(client)
@@ -1076,14 +1061,12 @@ func TestPersistentQueue_SizerTypeSwitchFromRequestsToItems(t *testing.T) {
 	newPQ := createTestPersistentQueueWithItemsCapacity(t, ext, 100)
 	// Verify sizer type mismatch is detected - when sizer types don't match,
 	// the queue must fully drain existing data before new sizing takes effect
-	assert.True(t, newPQ.sizerTypeMismatch.Load())
 	assert.Equal(t, int64(2), newPQ.Size())
 
 	assert.True(t, consume(newPQ, func(_ context.Context, _ uint64) error { return nil }))
 	assert.True(t, consume(newPQ, func(_ context.Context, _ uint64) error { return nil }))
 
 	// Verify mismatch is resolved after complete draining
-	assert.False(t, newPQ.sizerTypeMismatch.Load())
 	assert.Equal(t, int64(0), newPQ.Size())
 
 	// Verify new items-based sizing works correctly
